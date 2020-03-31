@@ -195,216 +195,216 @@ NSString* UITraitsClassString;
 }
 
 - (void)setPaddingBottom:(int)paddingBottom delay:(NSTimeInterval)delay
-{
-    if (self.paddingBottom == paddingBottom) {
-        return;
-    }
-
-    self.paddingBottom = paddingBottom;
-
-    __weak CDVIonicKeyboard* weakSelf = self;
-    SEL action = @selector(_updateFrame);
-    [NSObject cancelPreviousPerformRequestsWithTarget:weakSelf selector:action object:nil];
-    if (delay == 0) {
-        [self _updateFrame];
-    } else {
-        [weakSelf performSelector:action withObject:nil afterDelay:delay];
-    }
-}
-
-- (void)_updateFrame
-{
-    CGSize statusBarSize = [[UIApplication sharedApplication] statusBarFrame].size;
-    int statusBarHeight = MIN(statusBarSize.width, statusBarSize.height);
-    
-    int _paddingBottom = (int)self.paddingBottom;
-        
-    if (statusBarHeight == 40) {
-        _paddingBottom = _paddingBottom + 20;
-    }
-    NSLog(@"CDVIonicKeyboard: updating frame");
-    // NOTE: to handle split screen correctly, the application's window bounds must be used as opposed to the screen's bounds.
-    CGRect f = [[[[UIApplication sharedApplication] delegate] window] bounds];
-    CGRect wf = self.webView.frame;
-    switch (self.keyboardResizes) {
-        case ResizeBody:
-        {
-            NSString *js = [NSString stringWithFormat:@"Keyboard.fireOnResize(%d, %d, document.body);",
-                            _paddingBottom, (int)f.size.height];
-            [self.commandDelegate evalJs:js];
-            break;
-        }
-        case ResizeIonic:
-        {
-            NSString *js = [NSString stringWithFormat:@"Keyboard.fireOnResize(%d, %d, document.querySelector('ion-app'));",
-                            _paddingBottom, (int)f.size.height];
-            [self.commandDelegate evalJs:js];
-            break;
-        }
-        case ResizeNative:
-        {
-            [self.webView setFrame:CGRectMake(wf.origin.x, wf.origin.y, f.size.width - wf.origin.x, f.size.height - wf.origin.y - self.paddingBottom)];
-            break;
-        }
-        default:
-            break;
-    }
-    [self resetScrollView];
-}
-
-#pragma mark Keyboard Style
-
- - (void)setKeyboardStyle:(NSString*)style
-{
-    IMP newImp = [style isEqualToString:@"dark"] ? imp_implementationWithBlock(^(id _s) {
-        return UIKeyboardAppearanceDark;
-    }) : imp_implementationWithBlock(^(id _s) {
-        return UIKeyboardAppearanceLight;
-    });
-    
-    if (self.isWK) {
-        for (NSString* classString in @[WKClassString, UITraitsClassString]) {
-            Class c = NSClassFromString(classString);
-            Method m = class_getInstanceMethod(c, @selector(keyboardAppearance));
-            
-            if (m != NULL) {
-                method_setImplementation(m, newImp);
-            } else {
-                class_addMethod(c, @selector(keyboardAppearance), newImp, "l@:");
-            }
-        }
-    }
-    else {
-        for (NSString* classString in @[UIClassString, UITraitsClassString]) {
-            Class c = NSClassFromString(classString);
-            Method m = class_getInstanceMethod(c, @selector(keyboardAppearance));
-            
-            if (m != NULL) {
-                method_setImplementation(m, newImp);
-            } else {
-                class_addMethod(c, @selector(keyboardAppearance), newImp, "l@:");
-            }
-        }
-    }
-
-    _keyboardStyle = style;
-}
-
-#pragma mark HideFormAccessoryBar
-
-static IMP UIOriginalImp;
-static IMP WKOriginalImp;
-
-- (void)setHideFormAccessoryBar:(BOOL)hideFormAccessoryBar
-{
-    if (hideFormAccessoryBar == _hideFormAccessoryBar) {
-        return;
-    }
-
-    Method UIMethod = class_getInstanceMethod(NSClassFromString(UIClassString), @selector(inputAccessoryView));
-    Method WKMethod = class_getInstanceMethod(NSClassFromString(WKClassString), @selector(inputAccessoryView));
-
-    if (hideFormAccessoryBar) {
-        UIOriginalImp = method_getImplementation(UIMethod);
-        WKOriginalImp = method_getImplementation(WKMethod);
-
-        IMP newImp = imp_implementationWithBlock(^(id _s) {
-            return nil;
-        });
-
-        method_setImplementation(UIMethod, newImp);
-        method_setImplementation(WKMethod, newImp);
-    } else {
-        method_setImplementation(UIMethod, UIOriginalImp);
-        method_setImplementation(WKMethod, WKOriginalImp);
-    }
-
-    _hideFormAccessoryBar = hideFormAccessoryBar;
-}
-
-#pragma mark scroll
-
-- (void)setDisableScroll:(BOOL)disableScroll {
-    if (disableScroll == _disableScroll) {
-        return;
-    }
-    if (disableScroll) {
-        self.webView.scrollView.scrollEnabled = NO;
-        self.webView.scrollView.delegate = self;
-    }
-    else {
-        self.webView.scrollView.scrollEnabled = YES;
-        self.webView.scrollView.delegate = nil;
-    }
-    _disableScroll = disableScroll;
-}
-
-- (void)scrollViewDidScroll:(UIScrollView *)scrollView {
-    [scrollView setContentOffset: CGPointZero];
-}
-
-#pragma mark Plugin interface
-
-- (void)hideFormAccessoryBar:(CDVInvokedUrlCommand *)command
-{
-    if (command.arguments.count > 0) {
-        id value = [command.arguments objectAtIndex:0];
-        if (!([value isKindOfClass:[NSNumber class]])) {
-            value = [NSNumber numberWithBool:NO];
-        }
-
-        self.hideFormAccessoryBar = [value boolValue];
-    }
-
-    [self.commandDelegate sendPluginResult:[CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsBool:self.hideFormAccessoryBar]
-                                callbackId:command.callbackId];
-}
-
-- (void)hide:(CDVInvokedUrlCommand *)command
-{
-    [self.webView endEditing:YES];
-}
-
-- (void)setResizeMode:(CDVInvokedUrlCommand *)command
-{
-    NSString * mode = [command.arguments objectAtIndex:0];
-    if ([mode isEqualToString:@"ionic"]) {
-        self.keyboardResizes = ResizeIonic;
-    } else if ([mode isEqualToString:@"body"]) {
-        self.keyboardResizes = ResizeBody;
-    } else if ([mode isEqualToString:@"native"]) {
-        self.keyboardResizes = ResizeNative;
-    } else {
-        self.keyboardResizes = ResizeNone;
-    }
-}
-
-- (void)keyboardStyle:(CDVInvokedUrlCommand*)command
-{
-    id value = [command.arguments objectAtIndex:0];
-    if ([value isKindOfClass:[NSString class]]) {
-        value = [(NSString*)value lowercaseString];
-    } else {
-        value = @"light";
-    }
-
-     self.keyboardStyle = value;
-}
-
-- (void)disableScroll:(CDVInvokedUrlCommand*)command {
-    if (!command.arguments || ![command.arguments count]){
-        return;
-    }
-    id value = [command.arguments objectAtIndex:0];
-    if (value != [NSNull null]) {
-        self.disableScroll = [value boolValue];
-    }
-}
-
-#pragma mark dealloc
-
-- (void)dealloc
-{
+{                                                                                                                                                                                                   
+    if (self.paddingBottom == paddingBottom) {                                                                                                                                                      
+        return;                                                                                                                                                                                     
+    }                                                                                                                                                                                               
+																																																	
+    self.paddingBottom = paddingBottom;                                                                                                                                                             
+																																																	
+    __weak CDVIonicKeyboard* weakSelf = self;                                                                                                                                                       
+    SEL action = @selector(_updateFrame);                                                                                                                                                           
+    [NSObject cancelPreviousPerformRequestsWithTarget:weakSelf selector:action object:nil];                                                                                                         
+    if (delay == 0) {                                                                                                                                                                               
+        [self _updateFrame];                                                                                                                                                                        
+    } else {                                                                                                                                                                                        
+        [weakSelf performSelector:action withObject:nil afterDelay:delay];                                                                                                                          
+    }                                                                                                                                                                                               
+}                                                                                                                                                                                                   
+																																																	
+- (void)_updateFrame                                                                                                                                                                                
+{                                                                                                                                                                                                   
+    CGSize statusBarSize = [[UIApplication sharedApplication] statusBarFrame].size;                                                                                                                 
+    int statusBarHeight = MIN(statusBarSize.width, statusBarSize.height);                                                                                                                           
+																																																	
+    int _paddingBottom = (int)self.paddingBottom;                                                                                                                                                   
+																																																	
+    if (statusBarHeight == 40) {                                                                                                                                                                    
+        _paddingBottom = _paddingBottom + 20;                                                                                                                                                       
+    }                                                                                                                                                                                               
+    NSLog(@"CDVIonicKeyboard: updating frame");                                                                                                                                                     
+    // NOTE: to handle split screen correctly, the application's window bounds must be used as opposed to the screen's bounds.                                                                      
+    CGRect f = [[[[UIApplication sharedApplication] delegate] window] bounds];                                                                                                                      
+    CGRect wf = self.webView.frame;                                                                                                                                                                 
+    switch (self.keyboardResizes) {                                                                                                                                                                 
+        case ResizeBody:                                                                                                                                                                            
+        {                                                                                                                                                                                           
+            NSString *js = [NSString stringWithFormat:@"Keyboard.fireOnResize(%d, %d, document.body);",                                                                                             
+                            _paddingBottom, (int)f.size.height];                                                                                           
+            [self.commandDelegate evalJs:js];                                                                                                              
+            break;                                                                                                                                         
+        }                                                                                                                                                  
+        case ResizeIonic:                                                                                                                                  
+        {                                                                                                                                                  
+            NSString *js = [NSString stringWithFormat:@"Keyboard.fireOnResize(%d, %d, document.querySelector('ion-app'));",                                
+                            _paddingBottom, (int)f.size.height];                                                                                           
+            [self.commandDelegate evalJs:js];                                                                                                              
+            break;                                                                                                                                         
+        }                                                                                                                                                  
+        case ResizeNative:                                                                                                                                 
+        {                                                                                                                                                  
+            [self.webView setFrame:CGRectMake(wf.origin.x, wf.origin.y, f.size.width - wf.origin.x, f.size.height - wf.origin.y - self.paddingBottom)];    
+            break;                                                                                                                                         
+        }                                                                                                                                                  
+        default:                                                                                                                                           
+            break;                                                                                                                                         
+    }                                                                                                                                                      
+    [self resetScrollView];                                                                                                                                
+}                                                                                                                                                          
+																																						
+#pragma mark Keyboard Style                                                                                                                                
+																																						
+ - (void)setKeyboardStyle:(NSString*)style                                                                                                                 
+{                                                                                                                                                          
+    IMP newImp = [style isEqualToString:@"dark"] ? imp_implementationWithBlock(^(id _s) {                                                                  
+        return UIKeyboardAppearanceDark;                                                                                                                   
+    }) : imp_implementationWithBlock(^(id _s) {                                                                                                            
+        return UIKeyboardAppearanceLight;                                                                                                                  
+    });                                                                                                                                                    
+																																						
+    if (self.isWK) {                                                                                                                                       
+        for (NSString* classString in @[WKClassString, UITraitsClassString]) {                                                                             
+            Class c = NSClassFromString(classString);                                                                                                      
+            Method m = class_getInstanceMethod(c, @selector(keyboardAppearance));                                                                          
+																																						
+            if (m != NULL) {                                                                                                                               
+                method_setImplementation(m, newImp);                                                                                                       
+            } else {                                                                                                                                       
+                class_addMethod(c, @selector(keyboardAppearance), newImp, "l@:");                                                                          
+            }                                                                                                                                              
+        }                                                                                                                                                  
+    }                                                                                                                                                      
+    else {                                                                                                                                                 
+        for (NSString* classString in @[UIClassString, UITraitsClassString]) {                                                                             
+            Class c = NSClassFromString(classString);                                                                                                      
+            Method m = class_getInstanceMethod(c, @selector(keyboardAppearance));                                                                          
+																																						
+            if (m != NULL) {                                                                                                                               
+                method_setImplementation(m, newImp);                                                                                                       
+            } else {                                                                                                                                       
+                class_addMethod(c, @selector(keyboardAppearance), newImp, "l@:");                                                                          
+            }                                                                                                                                              
+        }                                                                                                                                                  
+    }                                                                                                                                                      
+																																						
+    _keyboardStyle = style;                                                                                                                                
+}                                                                                                                                                          
+																																						
+#pragma mark HideFormAccessoryBar                                                                                                                          
+																																						
+static IMP UIOriginalImp;                                                                                                                                  
+static IMP WKOriginalImp;                                                                                                                                  
+																																						
+- (void)setHideFormAccessoryBar:(BOOL)hideFormAccessoryBar                                                                                                 
+{                                                                                                                                                          
+    if (hideFormAccessoryBar == _hideFormAccessoryBar) {                                                                                                   
+        return;                                                                                                                                            
+    }                                                                                                                                                      
+																																						
+    Method UIMethod = class_getInstanceMethod(NSClassFromString(UIClassString), @selector(inputAccessoryView));                                            
+    Method WKMethod = class_getInstanceMethod(NSClassFromString(WKClassString), @selector(inputAccessoryView));                                            
+																																						
+    if (hideFormAccessoryBar) {                                                                                                                            
+        UIOriginalImp = method_getImplementation(UIMethod);                                                                                                
+        WKOriginalImp = method_getImplementation(WKMethod);                                                                                                
+																																						
+        IMP newImp = imp_implementationWithBlock(^(id _s) {                                                                                                
+            return nil;                                                                                                                                    
+        });                                                                                                                                                
+																																						
+        method_setImplementation(UIMethod, newImp);                                                                                                        
+        method_setImplementation(WKMethod, newImp);                                                                                                        
+    } else {                                                                                                                                               
+        method_setImplementation(UIMethod, UIOriginalImp);                                                                                                 
+        method_setImplementation(WKMethod, WKOriginalImp);                                                                                                 
+    }                                                                                                                                                      
+																																						
+    _hideFormAccessoryBar = hideFormAccessoryBar;                                                                                                          
+}                                                                                                                                                          
+																																						
+#pragma mark scroll                                                                                                                                        
+																																						
+- (void)setDisableScroll:(BOOL)disableScroll {                                                                                                             
+    if (disableScroll == _disableScroll) {                                                                                                                 
+        return;                                                                                                                                            
+    }                                                                                                                                                      
+    if (disableScroll) {                                                                                                                                   
+        self.webView.scrollView.scrollEnabled = NO;                                                                                                        
+        self.webView.scrollView.delegate = self;                                                                                                           
+    }                                                                                                                                                      
+    else {                                                                                                                                                 
+        self.webView.scrollView.scrollEnabled = YES;                                                                                                       
+        self.webView.scrollView.delegate = nil;                                                                                                            
+    }                                                                                                                                                      
+    _disableScroll = disableScroll;                                                                                                                        
+}                                                                                                                                                          
+																																						
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView {                                                                                                   
+    [scrollView setContentOffset: CGPointZero];                                                                                                            
+}                                                                                                                                                          
+																																						
+#pragma mark Plugin interface                                                                                                                              
+																																						
+- (void)hideFormAccessoryBar:(CDVInvokedUrlCommand *)command                                                                                               
+{                                                                                                                                                          
+    if (command.arguments.count > 0) {                                                                                                                     
+        id value = [command.arguments objectAtIndex:0];                                                                                                    
+        if (!([value isKindOfClass:[NSNumber class]])) {                                                                                                   
+            value = [NSNumber numberWithBool:NO];                                                                                                          
+        }                                                                                                                                                  
+																																						
+        self.hideFormAccessoryBar = [value boolValue];                                                                                                     
+    }                                                                                                                                                      
+																																						
+    [self.commandDelegate sendPluginResult:[CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsBool:self.hideFormAccessoryBar]                  
+                                callbackId:command.callbackId];                                                                                            
+}                                                                                                                                                          
+																																						
+- (void)hide:(CDVInvokedUrlCommand *)command                                                                                                               
+{                                                                                                                                                          
+    [self.webView endEditing:YES];                                                                                                                         
+}                                                                                                                                                          
+																																						
+- (void)setResizeMode:(CDVInvokedUrlCommand *)command                                                                                                      
+{                                                                                                                                                          
+    NSString * mode = [command.arguments objectAtIndex:0];                                                                                                 
+    if ([mode isEqualToString:@"ionic"]) {                                                                                                                 
+        self.keyboardResizes = ResizeIonic;                                                                                                                
+    } else if ([mode isEqualToString:@"body"]) {                                                                                                           
+        self.keyboardResizes = ResizeBody;                                                                                                                 
+    } else if ([mode isEqualToString:@"native"]) {                                                                                                         
+        self.keyboardResizes = ResizeNative;                                                                                                               
+    } else {                                                                                                                                               
+        self.keyboardResizes = ResizeNone;                                                                                                                 
+    }                                                                                                                                                      
+}                                                                                                                                                          
+																																						
+- (void)keyboardStyle:(CDVInvokedUrlCommand*)command                                                                                                       
+{                                                                                                                                                          
+    id value = [command.arguments objectAtIndex:0];                                                                                                        
+    if ([value isKindOfClass:[NSString class]]) {                                                                                                          
+        value = [(NSString*)value lowercaseString];                                                                                                        
+    } else {                                                                                                                                               
+        value = @"light";                                                                                                                                  
+    }                                                                                                                                                      
+																																						
+     self.keyboardStyle = value;                                                                                                                           
+}                                                                                                                                                          
+																																						
+- (void)disableScroll:(CDVInvokedUrlCommand*)command {                                                                                                     
+    if (!command.arguments || ![command.arguments count]){                                                                                                 
+        return;                                                                                                                                            
+    }                                                                                                                                                      
+    id value = [command.arguments objectAtIndex:0];                                                                                                        
+    if (value != [NSNull null]) {                                                                                                                          
+        self.disableScroll = [value boolValue];                                                                                                            
+    }                                                                                                                                                      
+}                                                                                                                                                          
+																																						
+#pragma mark dealloc                                                                                                                                       
+																																						
+- (void)dealloc                                                                                                                                            
+{                                                                                                                                                          
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
